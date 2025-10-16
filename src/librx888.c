@@ -43,11 +43,66 @@ enum rx888_async_status {
 };
 
 enum rx888_command {
-    STARTFX3 = 0xAA,
-    STARTADC = 0xB2,
-    STOPFX3 = 0xAB,
-    R820T2STDBY = 0xB8,
-    GPIOFX3 = 0xAD
+ // Start GPII engine and stream the data from ADC
+  // WRITE: UINT32
+  STARTFX3 = 0xAA,
+
+  // Stop GPII engine
+  // WRITE: UINT32
+  STOPFX3 = 0xAB,
+
+  // Get the information of device
+  // including model, version
+  // READ: UINT32
+  TESTFX3 = 0xAC,
+
+  // Control GPIOs
+  // WRITE: UINT32
+  GPIOFX3 = 0xAD,
+
+  // Write data to I2c bus
+  // WRITE: DATA
+  // INDEX: reg
+  // VALUE: i2c_addr
+  I2CWFX3 = 0xAE,
+
+  // Read data from I2c bus
+  // READ: DATA
+  // INDEX: reg
+  // VALUE: i2c_addr
+  I2CRFX3 = 0xAF,
+
+  // Reset USB chip and get back to bootloader mode
+  // WRITE: NONE
+  RESETFX3 = 0xB1,
+
+  // Set Argument, packet Index/Vaule contains the data
+  // WRITE: (Additional Data)
+  // INDEX: Argument_index
+  // VALUE: arguement value
+  SETARGFX3 = 0xB6,
+
+  // Start ADC with the specific frequency
+  // Optional, if ADC is running with crystal, this is not needed.
+  // WRITE: UINT32 -> adc frequency
+  STARTADC = 0xB2,
+
+  // R82XX family Tuner functions
+  // Initialize R82XX tuner
+  // WRITE: NONE
+  TUNERINIT = 0xB4,
+
+  // Tune to a sepcific frequency
+  // WRITE: UINT64
+  TUNERTUNE = 0xB5,
+
+  // Stop Tuner
+  // WRITE: NONE
+  TUNERSTDBY = 0xB8,
+
+  // Read Debug string if any
+  // READ:
+  READINFODEBUG = 0xBA
 };
 
 // Bitmasks for GPIO pins
@@ -71,6 +126,40 @@ enum GPIOPin {
     // RX888r2
     VHF_EN = 1U << 15,
     PGA_EN = 1U << 16,
+};
+
+enum ArgumentList {
+    // Set R8xx lna/mixer gain
+    // value: 0-29
+    R82XX_ATTENUATOR = 1,
+
+    // Set R8xx vga gain
+    // value: 0-15
+    R82XX_VGA = 2,
+
+    // Set R8xx sideband
+    // value: 0/1
+    R82XX_SIDEBAND = 3,
+
+    // Set R8xx harmonic
+    // value: 0/1
+    R82XX_HARMONIC = 4,
+
+    // Set DAT-31 Att
+    // Value: 0-63
+    DAT31_ATT = 10,
+
+    // Set AD8340 chip vga
+    // Value: 0-255
+    AD8340_VGA = 11,
+
+    // Preselector
+    // Value: 0-2
+    PRESELECTOR = 12,
+
+    // VHFATT
+    // Value: 0-15
+    VHF_ATTENUATOR = 13,
 };
 
 
@@ -125,6 +214,27 @@ static int rx888_send_command(struct libusb_device_handle *dev_handle,
   return 0;
 }
 
+static int rx888_send_argument(struct libusb_device_handle *dev_handle,
+                                 enum ArgumentList arg,uint32_t data)
+{
+
+
+  /* Send the control message. */
+  uint8_t zero = 0;
+  int ret = libusb_control_transfer(
+      dev_handle, LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_ENDPOINT_OUT, SETARGFX3, data, arg,
+      (unsigned char *)&zero, sizeof(zero), 0);
+
+  if (ret < 0) {
+    fprintf(stderr, "Could not send argument: 0x%X with data: %d. Error : %s.\n",
+            arg, data, libusb_error_name(ret));
+    return -1;
+  }
+
+  return 0;    
+
+}
+
 int rx888_set_hf_attenuation(rx888_dev_t *dev, double rf_gain)
 {
     if (!dev)
@@ -153,6 +263,67 @@ int rx888_set_hf_attenuation(rx888_dev_t *dev, double rf_gain)
     return 0;
 }
 
+//---------------------------------------------------------------
+
+int rx888_set_vga_gain(rx888_dev_t *dev, int vga_gain) {
+    if (!dev)
+        return -1;
+
+    fprintf(stderr, "Setting VGA Gain: %d\n", vga_gain);
+    rx888_send_argument(dev->dev_handle, AD8340_VGA, vga_gain);
+    //usleep(5000);
+
+    return 0;
+}
+
+int rx888_set_vga_attenuation(rx888_dev_t *dev, int vga_att) {
+    if (!dev)
+        return -1;
+
+    fprintf(stderr, "Setting VGA Att: %d\n", vga_att);
+    rx888_send_argument(dev->dev_handle, DAT31_ATT, vga_att);
+    //usleep(5000);
+
+    return 0;
+}
+
+
+int rx888_set_gpio(rx888_dev_t *dev, enum GPIOPin gpio,int enabled) {
+    if (!dev)
+        return -1;
+
+    if (enabled) {
+        dev->gpio_state |= gpio; // Set the GPIO bit
+    } 
+    else {
+        dev->gpio_state &= ~gpio; // Clear the GPIO bit
+    }
+
+    rx888_send_command(dev->dev_handle, GPIOFX3, dev->gpio_state);
+
+    return 0;
+}
+
+int rx888_set_rand(rx888_dev_t *dev, int enabled)
+{
+    fprintf(stderr, "Setting RAND: %d\n", enabled);
+    return rx888_set_gpio(dev, RAND, enabled);
+}
+
+int rx888_set_dither(rx888_dev_t *dev, int enabled)
+{
+    fprintf(stderr, "Setting Dither: %d\n", enabled);
+    return rx888_set_gpio(dev, DITH, enabled);
+}
+
+int rx888_set_pga(rx888_dev_t *dev, int enabled)
+{
+    fprintf(stderr, "Setting PGA: %d\n", enabled);
+    return rx888_set_gpio(dev, PGA_EN, enabled);
+}
+
+//---------------------------------------------------------------
+
 int rx888_set_sample_rate(rx888_dev_t *dev, uint32_t samp_rate)
 {
     if (!dev)
@@ -166,6 +337,7 @@ int rx888_set_sample_rate(rx888_dev_t *dev, uint32_t samp_rate)
 
     dev->sample_rate = samp_rate;
 
+    fprintf(stderr, "Setting Sample Rate: %u\n", samp_rate);
     rx888_send_command(dev->dev_handle, STARTADC, samp_rate);
 
     return 0;
@@ -438,7 +610,7 @@ int rx888_open(rx888_dev_t **out_dev, uint32_t index)
 
     dev->gpio_state = BIAS_HF;
     *out_dev = dev;
-    rx888_send_command(dev->dev_handle, R820T2STDBY, 0);
+    rx888_send_command(dev->dev_handle, TUNERSTDBY, 0);
     rx888_send_command(dev->dev_handle, STOPFX3, 0);
     rx888_send_command(dev->dev_handle, STARTADC, dev->sample_rate);
     rx888_send_command(dev->dev_handle, STARTFX3, 0);

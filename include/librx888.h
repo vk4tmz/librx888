@@ -74,6 +74,12 @@ enum rx888_device {
 };
 
 int rx888_set_hf_attenuation(rx888_dev_t *dev, double rf_gain);
+int rx888_set_vga_gain(rx888_dev_t *dev, int vga_gain);
+int rx888_set_vga_attenuation(rx888_dev_t *dev, int vga_att);
+
+int rx888_set_rand(rx888_dev_t *dev, int enabled);
+int rx888_set_dither(rx888_dev_t *dev, int enabled);
+int rx888_set_pga(rx888_dev_t *dev, int enabled);
 
 /*!
  * Set the sample rate for the device.
